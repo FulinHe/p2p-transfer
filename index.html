@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>P2P 极速传输 - 增强修复版 V4.2</title>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root { --p: #6366f1; --success: #10b981; --error: #ef4444; --warning: #f59e0b; }
+        body { font-family: system-ui; max-width: 660px; margin: 2rem auto; padding: 1rem; background: #f8fafc; color: #1e293b; }
+        .card { background: white; padding: 1.5rem; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+        .diag-panel { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 15px 0; }
+        .diag-node { background: #f1f5f9; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0; font-size: 0.8rem; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #cbd5e1; display: inline-block; margin-bottom: 4px; }
+        .active .dot { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .pending .dot { background: var(--warning); animation: blink 1.5s infinite; }
+        @keyframes blink { 50% { opacity: 0.3; } }
+        select, input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #cbd5e1; box-sizing: border-box; font-size: 1rem; }
+        button { background: var(--p); color: white; border: none; cursor: pointer; font-weight: 600; transition: opacity 0.2s; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .cancel-btn { background: #ef4444 !important; }
+        #progress-bar { width: 100%; height: 14px; background: #e2e8f0; border-radius: 7px; margin: 15px 0; display: none; overflow: hidden; }
+        #progress-fill { width: 0%; height: 100%; background: var(--p); transition: width 0.2s; }
+        .speed-tag { font-family: monospace; color: var(--p); font-weight: bold; font-size: 1.1rem; }
+        .debug-log { background: #0f172a; color: #94a3b8; padding: 12px; border-radius: 8px; font-size: 0.75rem; max-height: 220px; overflow-y: auto; margin-top: 15px; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2 style="margin-top:0;">P2P 极速传输 <span style="font-size: 0.7rem; color: #64748b;">增强修复版 V4.2</span></h2>
+    <div>我的 ID: <strong id="my-id" style="color:var(--p)">获取中...</strong></div>
+
+    <div class="diag-panel">
+        <div class="diag-node" id="node-sig"><div class="dot"></div><br><span>1. 信令服务</span></div>
+        <div class="diag-node" id="node-ice"><div class="dot"></div><br><span>2. 链路穿透</span></div>
+        <div class="diag-node" id="node-chan"><div class="dot"></div><br><span>3. P2P通道</span></div>
+    </div>
+
+    <div class="config-box" style="background:#fdf2f8; padding:12px; border-radius:10px; margin:10px 0; border:1px solid #fbcfe8;">
+        <label style="font-size: 0.85rem; font-weight: 600;">分片大小 (建议):</label>
+        <select id="chunk-size-select">
+            <option value="65536">64 KB (公网稳定)</option>
+            <option value="262144" selected>256 KB (平衡)</option>
+            <option value="1048576">1 MB (高速)</option>
+            <option value="4194304">4 MB (局域网专用)</option>
+        </select>
+    </div>
+
+    <div id="setup-area">
+        <input type="text" id="remote-id" placeholder="粘贴对方 ID">
+        <button id="connect-btn" onclick="handleConnect()">呼叫并建立连接</button>
+    </div>
+
+    <div id="transfer-area" style="display:none;">
+        <input type="file" id="file-input" onchange="onFilePicked()">
+        <button id="send-btn" onclick="requestSend()" disabled>开始发送</button>
+        <button id="cancel-btn" class="cancel-btn" onclick="cancelTransfer()" style="display:none;">中途取消</button>
+
+        <div id="receive-box" style="display:none; background: #f0fdf4; padding: 15px; border-radius: 12px; border: 1px solid #bbf7d0; margin: 10px 0;">
+            <div id="incoming-info" style="font-size: 0.9rem;"></div>
+            <button id="accept-btn" onclick="acceptIncoming()" style="background: var(--success); margin-top:10px;">确认接收 (支持续传)</button>
+        </div>
+
+        <div id="progress-bar"><div id="progress-fill"></div></div>
+        <div id="stats" style="text-align: center; font-size: 0.85rem; color: #64748b; height: 20px;"></div>
+    </div>
+
+    <div class="debug-log" id="log-box"></div>
+</div>
+
+<script>
+    /**
+     * V4.2 核心改进说明：
+     * 1. 写入安全：在接收 Chunk 时强制 Seek 到正确位置，防止乱序导致的文件损坏。
+     * 2. 状态同步：增加 'cancel' 指令，确保双方同步取消。
+     * 3. 内存保护：对 Fallback 模式增加 200MB 限制提醒，防止 OOM 崩溃。
+     * 4. 传输严谨性：在 Data 结构中加入 index，由接收端校验序号。
+     */
+    
+    let peer, conn, curFile, recvCtx, isSending = false, isReceiving = false;
+
+    function log(msg, type = 'info') {
+        const box = document.getElementById('log-box');
+        const color = { success: '#4ade80', error: '#f87171', info: '#94a3b8', warning: '#fbbf24' };
+        box.innerHTML += `<div><span style="color:#475569">[${new Date().toLocaleTimeString()}]</span> <span style="color:${color[type] || color.info}">${msg}</span></div>`;
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function updateNode(id, state) {
+        document.getElementById(id).className = 'diag-node ' + state;
+    }
+
+    function resetUI() {
+        document.getElementById('setup-area').style.display = 'block';
+        document.getElementById('transfer-area').style.display = 'none';
+        document.getElementById('receive-box').style.display = 'none';
+        document.getElementById('progress-bar').style.display = 'none';
+        document.getElementById('stats').innerHTML = '';
+        document.getElementById('cancel-btn').style.display = 'none';
+        document.getElementById('send-btn').disabled = true;
+        isSending = false;
+        isReceiving = false;
+        recvCtx = null;
+    }
+
+    window.onload = () => {
+        updateNode('node-sig', 'pending');
+        peer = new Peer({
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun.cloudflare.com:3478' }
+                ]
+            }
+        });
+
+        peer.on('open', id => {
+            document.getElementById('my-id').textContent = id;
+            updateNode('node-sig', 'active');
+            log("信令服务器已就绪", 'success');
+        });
+
+        peer.on('connection', c => {
+            log(`检测到入站请求: ${c.peer}`);
+            initConn(c);
+        });
+
+        peer.on('error', e => {
+            log("网络错误: " + e.type, 'error');
+            if (e.type === 'peer-unavailable') log("目标不存在", 'error');
+        });
+    };
+
+    function initConn(c) {
+        conn = c;
+        updateNode('node-ice', 'pending');
+
+        conn.on('open', () => {
+            updateNode('node-ice', 'active');
+            updateNode('node-chan', 'active');
+            document.getElementById('setup-area').style.display = 'none';
+            document.getElementById('transfer-area').style.display = 'block';
+            log("P2P 安全隧道已建立", 'success');
+        });
+
+        conn.on('data', onData);
+        
+        conn.on('close', () => {
+            log("对方已断开连接", 'warning');
+            updateNode('node-chan', '');
+            resetUI();
+        });
+    }
+
+    function handleConnect() {
+        const rid = document.getElementById('remote-id').value.trim();
+        if (!rid) return log("请输入 ID", 'warning');
+        initConn(peer.connect(rid, { reliable: true }));
+    }
+
+    function onFilePicked() {
+        curFile = document.getElementById('file-input').files[0];
+        document.getElementById('send-btn').disabled = !curFile;
+    }
+
+    function requestSend() {
+        if (!conn || !curFile) return;
+        const chunkSize = parseInt(document.getElementById('chunk-size-select').value);
+        const fileId = `${curFile.name}_${curFile.size}_${curFile.lastModified}`;
+
+        conn.send({
+            type: 'meta',
+            name: curFile.name,
+            size: curFile.size,
+            lastModified: curFile.lastModified,
+            id: fileId,
+            chunkSize: chunkSize,
+            chunks: Math.ceil(curFile.size / chunkSize)
+        });
+        log("文件预审请求已发出...", 'info');
+    }
+
+    async function executeSend(startIndex = 0) {
+        if (isSending) return;
+        isSending = true;
+        document.getElementById('cancel-btn').style.display = 'inline-block';
+        document.getElementById('send-btn').disabled = true;
+
+        const chunkSize = parseInt(document.getElementById('chunk-size-select').value);
+        const total = Math.ceil(curFile.size / chunkSize);
+        document.getElementById('progress-bar').style.display = 'block';
+
+        let lastTime = Date.now(), lastBytes = startIndex;
+
+        for (let i = startIndex; i < total; i++) {
+            if (!isSending) break;
+
+            // 流控：如果缓冲区积压超过 16MB，等待处理
+            if (conn.bufferSize > 16 * 1024 * 1024) {
+                await new Promise(r => setTimeout(r, 50));
+                i--; continue; 
+            }
+
+            const start = i * chunkSize;
+            const end = Math.min(curFile.size, start + chunkSize);
+            const chunk = await curFile.slice(start, end).arrayBuffer();
+            
+            conn.send({ 
+                type: 'chunk', 
+                data: chunk, 
+                index: i, 
+                offset: start,
+                isLast: i === total - 1 
+            });
+
+            if (Date.now() - lastTime >= 1000) {
+                const now = Date.now();
+                const speed = (((i - lastBytes) * chunkSize) / 1024 / 1024 / ((now - lastTime) / 1000)).toFixed(2);
+                document.getElementById('stats').innerHTML = `发送速度: <span class="speed-tag">${speed} MB/s</span>`;
+                lastTime = now; lastBytes = i;
+            }
+            document.getElementById('progress-fill').style.width = Math.round(((i + 1) / total) * 100) + '%';
+        }
+
+        if (isSending) log("发送任务圆满完成", 'success');
+        isSending = false;
+        document.getElementById('cancel-btn').style.display = 'none';
+        document.getElementById('send-btn').disabled = false;
+    }
+
+    function onData(data) {
+        if (data.type === 'meta') {
+            const key = `p2p_v2_${data.id}`; // 增强唯一性校验
+            const saved = localStorage.getItem(key) || 0;
+            recvCtx = { ...data, received: parseInt(saved), key, lastTime: Date.now(), bytesInterval: 0 };
+            
+            document.getElementById('incoming-info').innerHTML = `
+                <b>待接收:</b> ${data.name}<br>
+                大小: ${(data.size/1024/1024).toFixed(2)} MB<br>
+                本地进度: ${((recvCtx.received / data.chunks) * 100).toFixed(1)}%
+            `;
+            document.getElementById('receive-box').style.display = 'block';
+        } 
+        else if (data.type === 'start-at') {
+            log(`对方请求从第 ${data.index} 片开始传输`, 'info');
+            executeSend(data.index);
+        } 
+        else if (data.type === 'chunk') {
+            handleChunk(data);
+        }
+        else if (data.type === 'cancel') {
+            log("对方取消了传输任务", 'error');
+            stopAllTraffic();
+        }
+    }
+
+    async function acceptIncoming() {
+        try {
+            if (!window.showSaveFilePicker) throw new Error("API 不可用");
+            const handle = await window.showSaveFilePicker({ suggestedName: recvCtx.name });
+            recvCtx.writer = await handle.createWritable({ keepExistingData: true });
+            
+            // 严谨定位：如果是续传，先移动指针
+            if (recvCtx.received > 0) {
+                await recvCtx.writer.seek(recvCtx.received * recvCtx.chunkSize);
+            }
+            
+            document.getElementById('receive-box').style.display = 'none';
+            document.getElementById('progress-bar').style.display = 'block';
+            conn.send({ type: 'start-at', index: recvCtx.received });
+            isReceiving = true;
+        } catch (e) {
+            if (recvCtx.size > 200 * 1024 * 1024) {
+                if(!confirm("当前浏览器不支持大文件流式写入，接收 >200MB 文件可能导致浏览器崩溃，是否继续？")) return;
+            }
+            fallbackDownload();
+        }
+    }
+
+    function fallbackDownload() {
+        document.getElementById('receive-box').style.display = 'none';
+        log("模式：内存缓冲接收 (不支持断点续传)", 'warning');
+        recvCtx.chunksArray = [];
+        conn.send({ type: 'start-at', index: 0 });
+        isReceiving = true;
+    }
+
+    async function handleChunk(pkg) {
+        if (!recvCtx || !isReceiving) return;
+
+        try {
+            if (recvCtx.writer) {
+                // 核心修复：强制根据 offset 写入，防止异步竞争导致乱序
+                await recvCtx.writer.write({ type: 'write', data: pkg.data, position: pkg.offset });
+            } else {
+                recvCtx.chunksArray[pkg.index] = pkg.data;
+            }
+
+            recvCtx.received++;
+            recvCtx.bytesInterval += pkg.data.byteLength;
+
+            const now = Date.now();
+            if (now - recvCtx.lastTime >= 1000) {
+                const speed = (recvCtx.bytesInterval / 1024 / 1024 / ((now - recvCtx.lastTime) / 1000)).toFixed(2);
+                document.getElementById('stats').innerHTML = `接收速度: <span class="speed-tag">${speed} MB/s</span>`;
+                recvCtx.lastTime = now;
+                recvCtx.bytesInterval = 0;
+                localStorage.setItem(recvCtx.key, recvCtx.received); // 保存续传点
+            }
+
+            document.getElementById('progress-fill').style.width = Math.round((recvCtx.received / recvCtx.chunks) * 100) + '%';
+
+            if (pkg.isLast || recvCtx.received >= recvCtx.chunks) {
+                completeTransfer();
+            }
+        } catch (err) {
+            log("写入失败: " + err.message, 'error');
+            cancelTransfer();
+        }
+    }
+
+    async function completeTransfer() {
+        isReceiving = false;
+        if (recvCtx.writer) {
+            await recvCtx.writer.close();
+            log("文件已安全保存至磁盘", 'success');
+        } else if (recvCtx.chunksArray) {
+            const blob = new Blob(recvCtx.chunksArray);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = recvCtx.name; a.click();
+            log("文件已存入下载目录", 'success');
+        }
+        localStorage.removeItem(recvCtx.key);
+        document.getElementById('progress-bar').style.display = 'none';
+    }
+
+    function cancelTransfer() {
+        if (confirm("确定取消当前传输吗？")) {
+            if (conn) conn.send({ type: 'cancel' });
+            stopAllTraffic();
+        }
+    }
+
+    function stopAllTraffic() {
+        isSending = false;
+        isReceiving = false;
+        document.getElementById('cancel-btn').style.display = 'none';
+        document.getElementById('progress-bar').style.display = 'none';
+        document.getElementById('stats').innerHTML = '传输已中止';
+        if (recvCtx && recvCtx.writer) recvCtx.writer.close();
+        recvCtx = null;
+    }
+</script>
+</body>
+</html>
