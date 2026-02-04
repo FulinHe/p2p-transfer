@@ -2,17 +2,25 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>极速代下 - V7.6 同步版</title>
+    <title>极速代下 - V7.9</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --p: #6366f1; --s: #10b981; }
+        :root { --p: #6366f1; --s: #10b981; --err: #ef4444; --gray: #94a3b8; }
         body { font-family: system-ui; background: #f1f5f9; display: flex; justify-content: center; padding-top: 50px; margin: 0; }
         .card { background: white; padding: 30px; border-radius: 24px; width: 380px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); }
-        h3 { text-align: center; color: #1e293b; margin: 0 0 20px 0; }
+        
+        /* 状态灯样式 */
+        .status-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 20px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gray); transition: 0.3s; }
+        .dot.online { background: var(--s); box-shadow: 0 0 8px var(--s); }
+        .dot.sync { background: var(--p); box-shadow: 0 0 8px var(--p); }
+        .dot.error { background: var(--err); }
+        
+        h3 { text-align: center; color: #1e293b; margin: 0 0 10px 0; }
         input, textarea, button { width: 100%; padding: 14px; margin: 10px 0; border-radius: 12px; border: 1px solid #e2e8f0; box-sizing: border-box; font-size: 14px; }
         button { background: var(--p); color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        button:hover { opacity: 0.9; }
-        #confirm-box { background: #fffbeb; border: 2px dashed #f59e0b; padding: 15px; border-radius: 15px; display: none; margin-top: 15px; }
+        button:disabled { background: #cbd5e1; cursor: not-allowed; }
+        
         #progress-bar { height: 10px; background: #eee; border-radius: 5px; overflow: hidden; margin-top: 20px; display: none; }
         #progress-fill { height: 100%; background: var(--s); width: 0%; transition: width 0.1s; }
         .stats { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-top: 10px; }
@@ -20,26 +28,37 @@
 </head>
 <body>
 <div class="card">
-    <h3>🚀 极速下载站</h3>
-    <div id="login-box">
-        <input type="text" id="u" placeholder="账号">
-        <input type="password" id="p" placeholder="密码">
-        <button onclick="doLogin()">登录系统</button>
-    </div>
-    <div id="main-box" style="display:none;">
-        <textarea id="share-raw" style="width:100%; height:100px; padding:10px; border-radius:12px; border:1px solid #e2e8f0;" placeholder="直接粘贴分享消息..."></textarea>
-        <button onclick="sendTask()">提交加速任务</button>
-        <div id="confirm-box">
-            <p style="font-size:12px; color:#854d0e; margin-bottom:10px; font-weight:bold;">🎁 管理员已发货，请确认：</p>
-            <button id="save-btn" style="background:#f59e0b;">📁 选好路径，开始下载</button>
+    <div style="text-align: center;">
+        <div class="status-tag">
+            <div id="status-dot" class="dot"></div>
+            <span id="status-text">正在初始化网络...</span>
         </div>
+    </div>
+
+    <h3>🚀 极速代下站</h3>
+    
+    <div id="login-box">
+        <input type="text" id="u" placeholder="您的专属账号">
+        <input type="password" id="p" placeholder="授权密码">
+        <button id="login-btn" onclick="doLogin()">连接控制中枢</button>
+    </div>
+
+    <div id="main-box" style="display:none;">
+        <textarea id="share-raw" placeholder="直接粘贴网盘分享信息..."></textarea>
+        <button onclick="sendTask()">提交加速任务</button>
+        
+        <div id="confirm-box" style="display:none; background:#fffbeb; border:1px solid #fde68a; padding:15px; border-radius:12px; margin-top:15px;">
+            <p style="font-size:12px; color:#854d0e; margin:0 0 10px 0;">🎁 文件已准备好，请选择保存位置：</p>
+            <button id="save-btn" style="background:#f59e0b;">📁 选路径开始下载</button>
+        </div>
+
         <div id="transfer-zone">
             <div id="progress-bar"><div id="progress-fill"></div></div>
             <div class="stats" id="stats-ui" style="display:none;">
                 <span id="stat-p">进度: 0%</span>
                 <span id="stat-s" style="color:var(--s); font-weight:bold;">0 MB/s</span>
             </div>
-            <p id="msg" style="text-align:center; font-size:12px; color:#94a3b8; margin-top:15px;">等待中...</p>
+            <p id="msg" style="text-align:center; font-size:12px; color:#94a3b8; margin-top:15px;">等待任务指令...</p>
         </div>
     </div>
 </div>
@@ -48,11 +67,42 @@
     const ADMIN_ID = 'MY_PRIVATE_STATION_2024'; 
     let peer = new Peer(), conn, recvCtx = null, startTime = 0;
 
+    // 网络状态显示逻辑
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+
+    function updateStatus(state, msg) {
+        statusText.innerText = msg;
+        statusDot.className = 'dot ' + state;
+    }
+
+    peer.on('open', id => {
+        updateStatus('', '已进入 P2P 网络，请登录');
+    });
+
+    peer.on('error', err => {
+        updateStatus('error', '网络连接故障');
+        console.error(err);
+    });
+
     function doLogin() {
         const u = document.getElementById('u').value, p = document.getElementById('p').value;
         if(!u || !p) return;
+        
+        updateStatus('', '正在寻找中枢...');
         conn = peer.connect(ADMIN_ID);
-        conn.on('open', () => conn.send({ type: 'AUTH', user: u, pass: p }));
+
+        conn.on('open', () => {
+            updateStatus('online', '已连上中枢，验证身份...');
+            conn.send({ type: 'AUTH', user: u, pass: p });
+        });
+
+        conn.on('close', () => {
+            updateStatus('error', '中枢已断开');
+            document.getElementById('main-box').style.display = 'none';
+            document.getElementById('login-box').style.display = 'block';
+        });
+
         conn.on('data', onData);
     }
 
@@ -60,11 +110,12 @@
         const raw = document.getElementById('share-raw').value;
         if(!raw) return;
         conn.send({ type: 'TASK', rawText: raw });
-        document.getElementById('msg').innerText = "任务提交成功，请保持页面开启...";
+        document.getElementById('msg').innerText = "任务已送达管理端，请耐心等待文件...";
     }
 
     async function onData(data) {
         if(data.type === 'AUTH_OK') {
+            updateStatus('sync', '双端已同步 | 在线');
             document.getElementById('login-box').style.display = 'none';
             document.getElementById('main-box').style.display = 'block';
         } else if(data.type === 'meta') {
@@ -79,7 +130,6 @@
     }
 
     async function initSave(meta) {
-        // 使用管理端传来的 chunkSize 计算速度
         recvCtx = { ...meta, received: 0, currentChunkSize: meta.chunkSize || 262144 };
         document.getElementById('progress-bar').style.display = 'block';
         document.getElementById('stats-ui').style.display = 'flex';
@@ -88,25 +138,22 @@
             const h = await window.showSaveFilePicker({ suggestedName: meta.name });
             recvCtx.writer = await h.createWritable();
             conn.send({ type: 'READY_TO_RECEIVE' });
-        } catch (e) { conn.send({ type: 'READY_TO_RECEIVE' }); }
+            document.getElementById('msg').innerText = "正在接收数据： " + meta.name;
+        } catch (e) { 
+            conn.send({ type: 'READY_TO_RECEIVE' }); 
+        }
     }
 
     async function handleChunk(pkg) {
-        if (recvCtx.writer) {
-            await recvCtx.writer.write({ type: 'write', data: pkg.data, position: pkg.offset });
-        }
+        if (recvCtx.writer) await recvCtx.writer.write({ type: 'write', data: pkg.data, position: pkg.offset });
         recvCtx.received++;
-        
-        // 核心：写入成功后才发送 ACK
         conn.send({ type: 'ACK', index: pkg.index }); 
 
-        // 核心：基于已确认的分片数计算速度，与管理端逻辑完全一致
         if (recvCtx.received % 5 === 0 || pkg.isLast) {
             const duration = (Date.now() - startTime) / 1000;
             const confirmedBytes = recvCtx.received * recvCtx.currentChunkSize;
             const p = (recvCtx.received / recvCtx.chunks * 100).toFixed(1);
             const s = (confirmedBytes / 1024 / 1024 / duration).toFixed(2);
-            
             document.getElementById('progress-fill').style.width = p + '%';
             document.getElementById('stat-p').innerText = `进度: ${p}%`;
             document.getElementById('stat-s').innerText = `${s} MB/s`;
@@ -115,6 +162,7 @@
         if (pkg.isLast) {
             if (recvCtx.writer) await recvCtx.writer.close();
             document.getElementById('msg').innerText = "🎉 传输完成！";
+            updateStatus('sync', '传输完成 | 待机中');
         }
     }
 </script>
