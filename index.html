@@ -2,32 +2,104 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>P2P 传输 V4.8 - 强制同步修复版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P 极速传输 V4.9</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --p: #6366f1; --success: #10b981; --error: #ef4444; --warning: #f59e0b; }
-        body { font-family: system-ui; max-width: 660px; margin: 2rem auto; padding: 1rem; background: #f8fafc; }
-        .card { background: white; padding: 1.5rem; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
-        .status-bar { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 12px; padding: 10px; border-radius: 10px; background: #f1f5f9; border: 1px solid #e2e8f0; }
-        .diag-panel { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 15px 0; }
-        .diag-node { background: #f8fafc; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0; font-size: 0.8rem; }
-        .active { border-color: var(--success); color: var(--success); font-weight: bold; background: #f0fdf4; }
-        button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 10px; border: none; background: var(--p); color: white; cursor: pointer; font-weight: 600; }
-        button:disabled { background: #cbd5e1; }
-        #progress-bar { width: 100%; height: 14px; background: #e2e8f0; border-radius: 7px; margin: 15px 0; display: none; overflow: hidden; border: 1px solid #cbd5e1; }
-        #progress-fill { width: 0%; height: 100%; background: var(--p); transition: width 0.2s; }
-        .debug-log { background: #0f172a; color: #94a3b8; padding: 12px; border-radius: 10px; font-size: 0.75rem; max-height: 200px; overflow-y: auto; margin-top: 15px; font-family: monospace; }
-        .finish-text { color: var(--success); font-weight: bold; font-size: 1rem; }
+        :root { 
+            --p: #6366f1; --p-dark: #4f46e5; --success: #10b981; --error: #ef4444; 
+            --warning: #f59e0b; --bg: #f8fafc; --card-bg: rgba(255, 255, 255, 0.9);
+        }
+        
+        body { 
+            font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #e0e7ff 0%, #f1f5f9 100%);
+            min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center;
+        }
+
+        .container { 
+            width: 95%; max-width: 500px; background: var(--card-bg); 
+            backdrop-filter: blur(10px); border-radius: 24px; padding: 2rem;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+            border: 1px solid rgba(255,255,255,0.5);
+        }
+
+        h2 { margin: 0 0 1.5rem 0; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
+        h2 span { font-size: 0.6rem; background: var(--p); color: white; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; }
+
+        .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+        .status-item { background: #fff; padding: 12px; border-radius: 12px; border: 1px solid #e2e8f0; font-size: 0.85rem; }
+        .status-item label { display: block; color: #64748b; margin-bottom: 4px; font-size: 0.75rem; }
+        .status-item strong { color: var(--p); word-break: break-all; }
+
+        .diag-panel { display: flex; gap: 8px; margin-bottom: 20px; }
+        .diag-node { 
+            flex: 1; padding: 8px; border-radius: 10px; background: #f1f5f9; 
+            font-size: 0.75rem; text-align: center; color: #94a3b8; border: 1px solid transparent;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .diag-node.active { background: #ecfdf5; color: var(--success); border-color: #a7f3d0; font-weight: bold; }
+
+        input[type="text"] {
+            width: 100%; padding: 14px; border: 2px solid #e2e8f0; border-radius: 12px;
+            font-size: 1rem; transition: border-color 0.2s; box-sizing: border-box;
+        }
+        input[type="text"]:focus { outline: none; border-color: var(--p); }
+
+        button {
+            width: 100%; padding: 14px; margin: 10px 0; border-radius: 12px; border: none;
+            background: var(--p); color: white; font-size: 1rem; font-weight: 700;
+            cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.4);
+        }
+        button:hover { background: var(--p-dark); transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        button:disabled { background: #cbd5e1; box-shadow: none; cursor: not-allowed; }
+
+        .file-selector {
+            border: 2px dashed #cbd5e1; padding: 20px; border-radius: 12px;
+            text-align: center; margin: 10px 0; cursor: pointer; transition: all 0.2s;
+        }
+        .file-selector:hover { border-color: var(--p); background: rgba(99, 102, 241, 0.05); }
+
+        #progress-bar { 
+            width: 100%; height: 16px; background: #e2e8f0; border-radius: 50px; 
+            margin: 20px 0 10px 0; display: none; overflow: hidden; position: relative;
+        }
+        #progress-fill { 
+            width: 0%; height: 100%; background: linear-gradient(90deg, var(--p), #a5b4fc); 
+            transition: width 0.3s; box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+        }
+
+        #stats { text-align: center; font-size: 0.9rem; font-weight: 600; color: #475569; margin-bottom: 10px; }
+
+        .debug-log { 
+            background: #1e293b; color: #cbd5e1; padding: 12px; border-radius: 12px; 
+            font-size: 0.75rem; max-height: 180px; overflow-y: auto; font-family: 'Fira Code', monospace;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .log-time { color: #64748b; margin-right: 6px; }
+        
+        #receive-box {
+            background: #fff; border: 2px solid var(--success); border-radius: 16px;
+            padding: 16px; margin: 15px 0; animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
 <body>
 
-<div class="card">
-    <h2 style="margin:0 0 15px 0;">P2P 传输 <span style="font-size: 0.7rem; color: #64748b;">V4.8 强制同步版</span></h2>
+<div class="container">
+    <h2>P2P 极速传输 <span>V4.9 PRO</span></h2>
     
-    <div class="status-bar">
-        <span>我的 ID: <b id="my-id">获取中...</b></span>
-        <span id="storage-status">模式: 待定</span>
+    <div class="status-grid">
+        <div class="status-item">
+            <label>我的 ID</label>
+            <strong id="my-id">获取中...</strong>
+        </div>
+        <div class="status-item">
+            <label>存储模式</label>
+            <strong id="storage-status">等待连接</strong>
+        </div>
     </div>
 
     <div class="diag-panel">
@@ -37,39 +109,42 @@
     </div>
 
     <div id="setup-area">
-        <input type="text" id="remote-id" placeholder="粘贴对方 ID" style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
-        <button onclick="handleConnect()">连接并呼叫</button>
+        <input type="text" id="remote-id" placeholder="粘贴对方的 ID">
+        <button onclick="handleConnect()">建立安全连接</button>
     </div>
 
     <div id="transfer-area" style="display:none;">
-        <input type="file" id="file-input" onchange="onFilePicked()">
-        <button id="send-btn" onclick="requestSend()" disabled>开始/恢复发送</button>
+        <div class="file-selector" onclick="document.getElementById('file-input').click()">
+            <div id="file-label" style="color: #64748b;">点击选择或拖拽文件</div>
+            <input type="file" id="file-input" onchange="onFilePicked()" style="display:none;">
+        </div>
+        <button id="send-btn" onclick="requestSend()" disabled>开始加密传输</button>
         
-        <div id="receive-box" style="display:none; background: #f0fdf4; padding: 15px; border-radius: 12px; border: 1px solid #bbf7d0; margin: 10px 0;">
-            <div id="incoming-info" style="margin-bottom:10px;"></div>
-            <button onclick="acceptIncoming()" style="background: var(--success); margin:0;">确认接收</button>
+        <div id="receive-box" style="display:none;">
+            <div id="incoming-info" style="font-weight: 600; color: #1e293b;"></div>
+            <button onclick="acceptIncoming()" style="background: var(--success); box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">接受并下载</button>
         </div>
 
         <div id="progress-bar"><div id="progress-fill"></div></div>
-        <div id="stats" style="text-align: center; font-size: 0.9rem; height: 24px;"></div>
+        <div id="stats">准备就绪</div>
     </div>
 
     <div class="debug-log" id="log-box"></div>
 </div>
 
 <script>
+    /* 保留 V4.8 核心逻辑 */
     let peer, conn, curFile, recvCtx;
     let isSending = false, isReceiving = false;
     let lastAckedIndex = 0;
     let speedStats = { lastTime: 0, lastIndex: 0 };
 
-    // 防误触
     window.onbeforeunload = (e) => { if (isSending || isReceiving) return "传输中，确定离开？"; };
 
     function log(msg, type = 'info') {
         const box = document.getElementById('log-box');
         const color = { success: '#4ade80', error: '#f87171', warning: '#fbbf24' };
-        box.innerHTML += `<div><span style="color:#475569">[${new Date().toLocaleTimeString()}]</span> <span style="color:${color[type] || '#94a3b8'}">${msg}</span></div>`;
+        box.innerHTML += `<div><span class="log-time">${new Date().toLocaleTimeString()}</span><span style="color:${color[type] || '#cbd5e1'}">${msg}</span></div>`;
         box.scrollTop = box.scrollHeight;
     }
 
@@ -89,7 +164,7 @@
             document.getElementById('node-chan').classList.add('active');
             document.getElementById('setup-area').style.display = 'none';
             document.getElementById('transfer-area').style.display = 'block';
-            log("P2P 通道已建立", 'success');
+            log("P2P 安全连接已建立", 'success');
         });
         conn.on('data', onData);
     }
@@ -101,19 +176,20 @@
 
     function onFilePicked() {
         curFile = document.getElementById('file-input').files[0];
+        if(curFile) {
+            document.getElementById('file-label').innerHTML = `已选择: <strong style="color:var(--p)">${curFile.name}</strong>`;
+            document.getElementById('send-btn').disabled = false;
+        }
         lastAckedIndex = 0;
-        document.getElementById('send-btn').disabled = !curFile;
     }
 
     function requestSend() {
         if (!conn || !curFile) return;
         conn.send({
-            type: 'meta',
-            name: curFile.name,
-            size: curFile.size,
-            chunks: Math.ceil(curFile.size / 262144),
-            resumeIndex: lastAckedIndex
+            type: 'meta', name: curFile.name, size: curFile.size,
+            chunks: Math.ceil(curFile.size / 262144), resumeIndex: lastAckedIndex
         });
+        log("等待对方确认接收...");
     }
 
     async function executeSend(startIndex) {
@@ -126,11 +202,9 @@
         for (let i = startIndex; i < total; i++) {
             if (!isSending) break;
             if (conn.bufferSize > 1024 * 1024) { 
-                await new Promise(r => setTimeout(r, 100));
-                i--; continue;
+                await new Promise(r => setTimeout(r, 100)); i--; continue;
             }
-            const start = i * 262144;
-            const end = Math.min(curFile.size, start + 262144);
+            const start = i * 262144, end = Math.min(curFile.size, start + 262144);
             const chunk = await curFile.slice(start, end).arrayBuffer();
             conn.send({ type: 'chunk', data: chunk, index: i, offset: start, isLast: i === total - 1 });
         }
@@ -139,31 +213,23 @@
     function onData(data) {
         if (data.type === 'meta') {
             recvCtx = { ...data, received: data.resumeIndex || 0 };
-            document.getElementById('incoming-info').innerHTML = `文件: ${data.name} (${(data.size/1024/1024).toFixed(2)} MB)`;
+            document.getElementById('incoming-info').innerHTML = `收到文件: ${data.name} <br><small>${(data.size/1024/1024).toFixed(2)} MB</small>`;
             document.getElementById('receive-box').style.display = 'block';
         } 
-        else if (data.type === 'start-at') {
-            executeSend(data.index);
-        }
+        else if (data.type === 'start-at') { executeSend(data.index); }
         else if (data.type === 'report-progress') {
             lastAckedIndex = data.index;
             updateUI(data.index, data.total, '发送速度');
-            // 收到 100% 确认
             if (data.index >= data.total && isSending) completeSend();
         }
-        else if (data.type === 'chunk') {
-            handleChunk(data);
-        }
+        else if (data.type === 'chunk') { handleChunk(data); }
     }
 
     async function handleChunk(pkg) {
         if (!isReceiving) return;
         try {
-            if (recvCtx.writer) {
-                await recvCtx.writer.write({ type: 'write', data: pkg.data, position: pkg.offset });
-            } else {
-                recvCtx.chunksArray[pkg.index] = pkg.data;
-            }
+            if (recvCtx.writer) await recvCtx.writer.write({ type: 'write', data: pkg.data, position: pkg.offset });
+            else recvCtx.chunksArray[pkg.index] = pkg.data;
             recvCtx.received++;
             if (recvCtx.received % 10 === 0 || pkg.isLast) {
                 conn.send({ type: 'report-progress', index: recvCtx.received, total: recvCtx.chunks });
@@ -173,42 +239,38 @@
         } catch (e) { isReceiving = false; }
     }
 
-    // 修复 1：接收端完成逻辑
     async function completeTransfer() {
         isReceiving = false;
-        // 强制 UI 满格
         document.getElementById('progress-fill').style.width = '100%';
-        document.getElementById('stats').innerHTML = '<span class="finish-text">✅ 接收完成，文件已保存</span>';
-        
+        document.getElementById('stats').innerHTML = '<span style="color:var(--success)">✅ 接收完成，文件已存盘</span>';
         if (recvCtx.writer) await recvCtx.writer.close();
         else {
             const a = document.createElement('a');
             a.href = URL.createObjectURL(new Blob(recvCtx.chunksArray));
             a.download = recvCtx.name; a.click();
         }
-        // 发送最后的 100% 信号
         conn.send({ type: 'report-progress', index: recvCtx.chunks, total: recvCtx.chunks });
-        log("传输结束：文件已存盘", 'success');
+        log("传输圆满完成", 'success');
     }
 
-    // 修复 2：发送端完成逻辑
     function completeSend() {
         isSending = false;
         document.getElementById('progress-fill').style.width = '100%';
-        document.getElementById('stats').innerHTML = '<span class="finish-text">🎉 发送成功！对方已确认接收</span>';
+        document.getElementById('stats').innerHTML = '<span style="color:var(--success)">🎉 发送成功！对方已确认</span>';
         document.getElementById('send-btn').disabled = false;
-        log("传输成功：对方已完整保存文件", 'success');
+        log("对方已收到完整文件", 'success');
     }
 
     async function acceptIncoming() {
+        const s = document.getElementById('storage-status');
         try {
             if (!window.showSaveFilePicker) throw 'N';
             const handle = await window.showSaveFilePicker({ suggestedName: recvCtx.name });
             recvCtx.writer = await handle.createWritable();
-            document.getElementById('storage-status').innerText = "模式: 边下边存";
+            s.innerText = "边下边存 (安全)"; s.style.color = "var(--success)";
         } catch (e) {
             recvCtx.chunksArray = [];
-            document.getElementById('storage-status').innerText = "模式: 内存模式";
+            s.innerText = "内存模式 (易崩溃)"; s.style.color = "var(--error)";
         }
         isReceiving = true;
         document.getElementById('receive-box').style.display = 'none';
@@ -219,13 +281,11 @@
     function updateUI(cur, total, label) {
         const p = Math.min(100, Math.round((cur / total) * 100));
         document.getElementById('progress-fill').style.width = p + '%';
-        const now = Date.now();
-        const diff = (now - speedStats.lastTime) / 1000;
+        const now = Date.now(), diff = (now - speedStats.lastTime) / 1000;
         if (diff >= 1) {
             const speed = (((cur - speedStats.lastIndex) * 262144) / 1024 / 1024 / diff).toFixed(2);
-            document.getElementById('stats').innerHTML = `${label}: <b style="color:var(--p)">${speed} MB/s</b> (${p}%)`;
-            speedStats.lastTime = now;
-            speedStats.lastIndex = cur;
+            document.getElementById('stats').innerHTML = `${label}: <span style="color:var(--p)">${speed} MB/s</span> (${p}%)`;
+            speedStats.lastTime = now; speedStats.lastIndex = cur;
         }
     }
 </script>
