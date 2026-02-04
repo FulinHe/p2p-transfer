@@ -2,76 +2,62 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>极速代下 - 提交端 V5.9 (手势激活版)</title>
+    <title>网盘极速代下 V6.0</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        :root { --p: #6366f1; --s: #10b981; --warn: #f59e0b; }
-        body { font-family: system-ui; background: #f1f5f9; display: flex; justify-content: center; padding-top: 50px; margin: 0; }
-        .card { background: white; padding: 30px; border-radius: 24px; width: 100%; max-width: 420px; box-shadow: 0 20px 40px rgba(0,0,0,0.05); }
-        h3 { text-align: center; color: #1e293b; margin-bottom: 20px; }
-        input, textarea, button { width: 100%; padding: 14px; margin: 10px 0; border-radius: 12px; border: 1px solid #e2e8f0; box-sizing: border-box; font-size: 15px; }
-        textarea { height: 100px; resize: none; border: 2px solid var(--p); outline: none; }
-        button { background: var(--p); color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        button:hover { opacity: 0.9; transform: translateY(-1px); }
-        
-        /* 核心：接收确认框样式 */
-        #recv-confirm-box { 
-            background: #fffbeb; border: 2px dashed var(--warn); padding: 15px; 
-            border-radius: 15px; margin: 15px 0; display: none; animation: slideDown 0.3s ease;
-        }
-        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        #pb { height: 10px; background: #eee; border-radius: 5px; display: none; overflow: hidden; margin-top: 20px; }
-        #fill { height: 100%; background: var(--s); width: 0%; transition: width 0.1s; }
-        .st { font-size: 13px; text-align: center; margin-top: 15px; padding: 12px; border-radius: 10px; line-height: 1.6; }
-        .bg-ok { background: #dcfce7; color: #15803d; }
-        .bg-err { background: #fee2e2; color: #ef4444; }
-        .bg-wait { background: #f1f5f9; color: #64748b; }
+        :root { --p: #6366f1; --s: #10b981; }
+        body { font-family: system-ui; background: #f1f5f9; display: flex; justify-content: center; padding-top: 50px; }
+        .container { background: white; padding: 30px; border-radius: 20px; width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 10px; border: 1px solid #e2e8f0; box-sizing: border-box; }
+        button { background: var(--p); color: white; font-weight: bold; cursor: pointer; border: none; }
+        #progress-bar { height: 12px; background: #eee; border-radius: 6px; overflow: hidden; margin: 15px 0; display: none; }
+        #progress-fill { height: 100%; background: var(--s); width: 0%; transition: width 0.1s; }
+        #stats { font-size: 13px; color: #64748b; text-align: center; }
+        #confirm-box { background: #fffbeb; border: 2px dashed #f59e0b; padding: 15px; border-radius: 12px; display: none; margin-bottom: 15px; }
     </style>
 </head>
 <body>
-
-<div class="card">
-    <h3>🚀 极速推送通道 V5.9</h3>
+<div class="container">
+    <h3>网盘极速代下</h3>
+    <div id="status-bar" style="font-size:12px; margin-bottom:10px; color:#94a3b8;">状态: 正在初始化...</div>
     
-    <div id="auth-box">
-        <input type="text" id="u" placeholder="输入您的账号">
-        <input type="password" id="p" placeholder="输入登录密码">
-        <button id="login-btn" onclick="doLogin()">进入加速通道</button>
+    <div id="input-area">
+        <input type="text" id="u" placeholder="账号">
+        <input type="password" id="p" placeholder="密码">
+        <input type="text" id="share-url" placeholder="百度网盘链接">
+        <button onclick="doLoginAndSubmit()">提交任务</button>
     </div>
 
-    <div id="main-box" style="display:none;">
-        <textarea id="raw" placeholder="粘贴网盘分享信息..."></textarea>
-        <button onclick="doSubmit()">提交下载任务</button>
+    <div id="confirm-box">
+        <p style="font-size:13px; color:#854d0e; margin:0 0 10px 0;">🎁 管理员已发货，请确认保存位置：</p>
+        <button id="save-btn" style="background:#f59e0b;">选好路径，开始下载</button>
+    </div>
 
-        <div id="recv-confirm-box">
-            <p style="font-size: 13px; color: #854d0e; margin: 0 0 10px 0; font-weight: bold;">🎁 管理员已发货！</p>
-            <p id="file-info" style="font-size: 12px; margin-bottom: 12px; color: #b45309;"></p>
-            <button id="real-save-btn" style="background: var(--warn);">📁 选好路径，开始下载</button>
-        </div>
-
-        <div id="pb"><div id="fill"></div></div>
-        <div id="st-box" class="st bg-wait">就绪：等待任务下发</div>
+    <div id="transfer-zone">
+        <div id="progress-bar"><div id="progress-fill"></div></div>
+        <div id="stats">等待连接...</div>
     </div>
 </div>
 
 <script>
-    const ADMIN_ID = 'MY_PRIVATE_STATION_2024'; 
-    let peer, conn, recvCtx = null, tempMeta = null;
+    const ADMIN_ID = 'MY_PRIVATE_STATION_2024';
+    let peer, conn, recvCtx = null;
 
-    function doLogin() {
+    function doLoginAndSubmit() {
         const u = document.getElementById('u').value;
         const p = document.getElementById('p').value;
-        if(!u || !p) return;
-        document.getElementById('login-btn').disabled = true;
-        document.getElementById('login-btn').innerText = "连接中...";
+        const task = document.getElementById('share-url').value;
+        if(!u || !p || !task) return alert("请填全信息");
 
         peer = new Peer();
-        peer.on('open', () => {
+        peer.on('open', id => {
+            document.getElementById('status-bar').innerText = '我的 ID: ' + id + ' (在线)';
             conn = peer.connect(ADMIN_ID);
             conn.on('open', () => {
                 conn.send({ type: 'AUTH', user: u, pass: p });
+                conn.send({ type: 'TASK', rawText: task });
+                document.getElementById('input-area').style.display = 'none';
+                document.getElementById('stats').innerText = "任务已提交，等待发货...";
             });
             conn.on('data', onData);
         });
@@ -79,71 +65,52 @@
 
     async function onData(data) {
         if(data.type === 'AUTH_OK') {
-            document.getElementById('auth-box').style.display = 'none';
-            document.getElementById('main-box').style.display = 'block';
+            document.getElementById('status-bar').innerText += ' | 认证成功';
         } else if(data.type === 'meta') {
-            // 第一步：存储元数据，显示黄色确认框 
-            tempMeta = data;
-            document.getElementById('file-info').innerText = `文件名: ${data.name}\n大小: ${(data.size/1024/1024).toFixed(2)} MB`;
-            document.getElementById('recv-confirm-box').style.display = 'block';
-            document.getElementById('st-box').innerText = "等待用户手动开启磁盘写入权限...";
-            
-            // 第二步：绑定用户点击事件
-            document.getElementById('real-save-btn').onclick = async () => {
-                document.getElementById('recv-confirm-box').style.display = 'none';
-                await activateFileSystem(tempMeta);
+            // 收到元数据，触发手势确认
+            document.getElementById('confirm-box').style.display = 'block';
+            document.getElementById('save-btn').onclick = async () => {
+                document.getElementById('confirm-box').style.display = 'none';
+                await initWriter(data);
             };
         } else if(data.type === 'chunk') {
-            receiveChunk(data);
+            handleChunk(data);
         }
     }
 
-    async function activateFileSystem(meta) {
+    async function initWriter(meta) {
         recvCtx = { ...meta, received: 0 };
-        const st = document.getElementById('st-box');
-        document.getElementById('pb').style.display = 'block';
-
+        document.getElementById('progress-bar').style.display = 'block';
         try {
-            // 因为在 onclick 回调内，浏览器允许弹出保存框
             const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
             recvCtx.writer = await handle.createWritable();
-            
-            st.className = "st bg-ok";
-            st.innerText = "✅ 路径已锁定：磁盘直写中...";
-            // 反馈信号：告知管理端开始吐数据
-            conn.send({ type: 'READY_TO_RECEIVE' }); 
+            conn.send({ type: 'READY_TO_RECEIVE' });
         } catch (e) {
-            recvCtx.chunksArray = []; 
-            st.className = "st bg-err";
-            st.innerText = "⚠️ 模式: 内存缓存 (" + e.message + ")";
+            recvCtx.chunksArray = [];
+            document.getElementById('stats').innerText = "⚠️ 降级为内存模式";
             conn.send({ type: 'READY_TO_RECEIVE' });
         }
     }
 
-    async function receiveChunk(pkg) {
+    async function handleChunk(pkg) {
         if (recvCtx.writer) {
             await recvCtx.writer.write({ type: 'write', data: pkg.data, position: pkg.offset });
         } else {
             recvCtx.chunksArray[pkg.index] = pkg.data;
         }
         recvCtx.received++;
-        const p = (recvCtx.received / recvCtx.chunks) * 100;
-        document.getElementById('fill').style.width = p + '%';
+        
+        // 参考你代码的进度更新频率
+        if (recvCtx.received % 10 === 0 || pkg.isLast) {
+            const percent = (recvCtx.received / recvCtx.chunks * 100).toFixed(1);
+            document.getElementById('progress-fill').style.width = percent + '%';
+            document.getElementById('stats').innerText = `正在接收: ${percent}%`;
+        }
+
         if (pkg.isLast) {
             if (recvCtx.writer) await recvCtx.writer.close();
-            else {
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(new Blob(recvCtx.chunksArray));
-                a.download = recvCtx.name; a.click();
-            }
-            document.getElementById('st-box').innerText = "🎉 传输完成！";
+            document.getElementById('stats').innerText = "🎉 接收完成！";
         }
-    }
-
-    function doSubmit() {
-        conn.send({ type: 'TASK', rawText: document.getElementById('raw').value });
-        document.getElementById('st-box').innerText = "任务已提交...";
-        document.getElementById('raw').value = "";
     }
 </script>
 </body>
